@@ -4,6 +4,8 @@ A TRMNL-style split-panel dashboard sketch for the [LilyGo T5 4.7" ePaper S3](ht
 (ESP32-S3 + E-Ink display). Shows a **Clock** widget and a live **Weather** widget side by side,
 in a clean monochrome layout with dashed widget borders and grey footer labels.
 
+![Dashboard running on the LilyGo T5 4.7" ePaper S3, showing the Clock and Weather panels](public/image.jpg)
+
 ## Features
 
 - **Accurate time** -- synced via NTP over WiFi at boot and every 6 hours after, with the onboard
