@@ -12,6 +12,7 @@ bool EpdDisplay::begin() {
 
 void EpdDisplay::powerOn() { epd_poweron(); }
 void EpdDisplay::powerOff() { epd_poweroff(); }
+void EpdDisplay::powerOffAll() { epd_poweroff_all(); }
 void EpdDisplay::fullClear() { epd_clear(); }
 
 void EpdDisplay::beginFrame() {

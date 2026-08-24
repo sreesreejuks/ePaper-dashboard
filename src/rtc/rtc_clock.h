@@ -10,11 +10,15 @@ public:
     bool begin();
     bool isOnline() const { return online_; }
 
-    // Connects to WiFi (config.h WIFI_SSID/WIFI_PASSWORD), fetches UTC via
-    // NTP, and writes it to the RTC chip -- correcting whatever drift has
-    // built up since the last sync. Blocks for up to NTP_SYNC_TIMEOUT_MS.
-    // WiFi is always left disconnected+off afterward, whether or not the
-    // sync succeeded. Returns true only if the RTC was actually updated.
+    // Fetches UTC via NTP and writes it to the RTC chip -- correcting
+    // whatever drift has built up since the last sync. Blocks for up to
+    // NTP_SYNC_TIMEOUT_MS. Assumes the caller has already brought WiFi up
+    // (e.g. via connectWiFi() in ePaper-dashboard.ino) and leaves it
+    // connected afterward -- this method does not manage the WiFi
+    // connection itself, so one wake can share a single WiFi session across
+    // NTP sync, location lookup, and weather fetch instead of paying for
+    // three separate connects. Returns true only if the RTC was actually
+    // updated.
     bool syncFromNtp();
 
     // NOTE: each method below formats into its own static buffer (see
