@@ -8,7 +8,12 @@ A TRMNL-style split-panel dashboard for the LilyGo T5 4.7" ePaper S3 (ESP32-S3 w
 display, PCF8563 RTC, WiFi). The panel is split into two widgets side by side: a **Clock** on the
 left and **Weather** on the right, inside a shared dashed-border/grey-footer chrome. Time is kept
 accurate via NTP sync over WiFi (with an RTC chip as the offline fallback), and weather is fetched
-live from Open-Meteo for a fixed location, reverse-geocoded to a place name at boot.
+live from Open-Meteo for a fixed location, reverse-geocoded to a place name once.
+
+The board runs as a **wake -> update -> deep sleep** cycle, not a continuously-running loop --
+see "Refresh model" below. This is deliberate for battery life: the e-paper panel holds its last
+image with zero power draw while the ESP32-S3 is in deep sleep, so there's no benefit to keeping
+the CPU awake between updates.
 
 Entry point: [epaper_dashboard.ino](epaper_dashboard.ino).
 
@@ -43,24 +48,30 @@ disk but are **not** part of this path and shouldn't be extended:
 
 **Active components:**
 - [`EpdDisplay`](src/display/epd_display.h) -- thin wrapper around the LilyGo `epd_driver` API;
-  owns the framebuffer and the full-frame vs. partial-update drawing primitives.
+  owns the framebuffer and the full-frame vs. partial-update drawing primitives. `powerOff()` vs
+  `powerOffAll()` matters: the latter also cuts `POWER_EN` and the status LED (not just the
+  panel), so it's what's used right before deep sleep; `powerOff()` is for when execution is about
+  to keep running (not applicable currently, since every wake ends in deep sleep, but kept for any
+  future non-sleep caller).
 - [`RtcClock`](src/rtc/rtc_clock.h) -- owns the PCF8563 chip. The chip's raw stored value is
   always UTC; `TIMEZONE_OFFSET_MINUTES` (config.h) is applied only when formatting for display
-  (`timeString()`/`dateString()`/etc.), never written back to the chip. `syncFromNtp()` connects
-  to WiFi, pulls UTC from NTP, writes it to the chip, then disconnects -- called once at boot and
-  every `NTP_RESYNC_INTERVAL_MS` thereafter. If you ever reseed the chip from a local wall-clock
+  (`timeString()`/`dateString()`/etc.), never written back to the chip. `syncFromNtp()` pulls UTC
+  from NTP and writes it to the chip, but does **not** manage WiFi itself -- it assumes the caller
+  already connected (see "Refresh model" below), and is only called when NTP sync is actually due
+  (`NTP_SYNC_EVERY_N_WAKES`), not every wake. If you ever reseed the chip from a local wall-clock
   time again (e.g. `__DATE__`/`__TIME__`), remember to subtract the timezone offset first, or the
   display will run `TIMEZONE_OFFSET_MINUTES` fast -- this exact bug shipped once already.
 - [`WeatherService`](src/weather/weather_service.h) -- fetches live conditions from Open-Meteo
-  (`fetch()`, every `WEATHER_UPDATE_INTERVAL_MS`) and a one-time reverse-geocoded location name
-  from BigDataCloud (`fetchLocationName()`, once at boot only -- the dashboard doesn't move).
-  Both open their own WiFi connection and close it when done, same pattern as `RtcClock`. Uses
-  `http.useHTTP10(true)` deliberately: Open-Meteo's chunked-encoded response otherwise reaches
-  ArduinoJson un-dechunked and fails to parse (`InvalidInput`).
+  (`fetch()`, only called when due -- see `WEATHER_REFRESH_EVERY_N_WAKES`) and a one-time
+  reverse-geocoded location name from BigDataCloud (`fetchLocationName()`, retried on future wakes
+  until it succeeds once -- the dashboard doesn't move, so after that it's never called again).
+  Like `RtcClock`, assumes the caller already has WiFi connected -- it does not open/close its own
+  connection. Uses `http.useHTTP10(true)` deliberately: Open-Meteo's chunked-encoded response
+  otherwise reaches ArduinoJson un-dechunked and fails to parse (`InvalidInput`).
 - `ClockPanel` / `WeatherPanel` (`src/screens/`) -- implement the `Panel` interface
   (`drawContent()` for boot/full-refresh, `tick()` for partial updates). `WeatherPanel::tick()` is
-  intentionally a no-op; weather only changes on the ~10-minute full-refresh cadence driven by
-  `FULL_REFRESH_EVERY_N_UPDATES`, so a separate tick path isn't needed.
+  intentionally a no-op; weather only changes on the full-refresh cadence driven by
+  `FULL_REFRESH_EVERY_N_WAKES`, so a separate tick path isn't needed.
 - [`DashboardLayout`](src/screens/dashboard_layout.h) -- composes the two panels' chrome (dashed
   border, grey footer with the panel's `title()`) and content areas; the only place that knows
   the actual pixel geometry of "left panel" vs. "right panel".
@@ -68,9 +79,32 @@ disk but are **not** part of this path and shouldn't be extended:
   weather coordinates). `secrets.h` is WiFi credentials only, kept separate so it can be
   gitignored.
 
-**Refresh model:** `CLOCK_UPDATE_INTERVAL_MS` (60s) drives `loop()`. Every update calls
-`DashboardLayout::tick()` (cheap partial redraw); every `FULL_REFRESH_EVERY_N_UPDATES`-th update
-instead calls `fullClear()` + `DashboardLayout::drawFull()` (full flash-clear, resets e-paper
-ghosting). NTP resync and weather fetch run on their own independent timers inside `loop()`,
-outside this cadence -- they update in-memory data (`liveWeather`, the RTC chip) but don't force a
-redraw themselves; the next scheduled tick/full-refresh just picks up whatever's current.
+**Refresh model:** there is no `loop()` -- each deep-sleep wake runs `setup()` once end to end and
+deep sleep restarts execution at `setup()` on the next wake. `DEEP_SLEEP_INTERVAL_SEC` (1 minute)
+is deliberately short because the clock/date must show the current minute, read straight from the
+RTC chip -- **this does not mean WiFi/NTP/weather happen every wake too.** Those are gated
+independently against `wakeCount` (an `RTC_DATA_ATTR` global, survives deep sleep):
+`ntpDue = wakeCount % NTP_SYNC_EVERY_N_WAKES == 0` (6h) and
+`weatherDue = wakeCount % WEATHER_REFRESH_EVERY_N_WAKES == 0` (30min). WiFi is only brought up at
+all if `ntpDue || weatherDue || !locationResolved` -- most wakes touch only the RTC chip (no radio
+at all) and repaint the clock from cached/last-known data. `wakeCount == 0` (first boot) satisfies
+every modulo check automatically, so first boot always does everything with no special-casing.
+This wake-count approach works because deep-sleep timer wakeups are driven by the RTC hardware
+timer and don't meaningfully drift at this timescale, so wake count is an accurate stand-in for
+elapsed time without needing to track timestamps separately.
+
+Only `RTC_DATA_ATTR` globals (`savedWeather`, `locationResolved`, `wakeCount` in
+`epaper_dashboard.ino`) survive a wake, since deep sleep wipes ordinary RAM; everything else,
+including the `EpdDisplay`/`RtcClock`/`WeatherService`/`Panel` objects, is freshly constructed
+every wake. `wakeCount` also drives the full-vs-partial render policy: `DashboardLayout::tick()`
+(cheap partial redraw, just the clock digits) every wake, except every
+`FULL_REFRESH_EVERY_N_WAKES`-th (60, ~hourly), which does `fullClear()` +
+`DashboardLayout::drawFull()` instead (full flash-clear, resets e-paper ghosting -- also the only
+point at which freshly-fetched weather actually gets painted, since `WeatherPanel::tick()` is a
+no-op). Render happens **every** wake unconditionally, regardless of whether WiFi was needed or
+connected that wake -- only `EpdDisplay::begin()` failing (PSRAM alloc) halts instead of sleeping.
+
+**WiFi failure handling:** if `connectWiFi()` is attempted (because something was due) and fails,
+that wake's NTP sync / weather fetch / location lookup are simply skipped and retried on a future
+wake -- the render still happens using cached/last-known data (`savedWeather`, the RTC's own
+ticking time), never blocked on WiFi succeeding.

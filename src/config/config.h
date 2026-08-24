@@ -15,14 +15,18 @@
 constexpr int TIMEZONE_OFFSET_MINUTES = 330; // UTC+5:30
 
 // ---- WiFi / NTP ----
-// RtcClock::syncFromNtp() uses these to correct the RTC's drift periodically.
-// WIFI_SSID/WIFI_PASSWORD come from secrets.h (gitignored, not committed) --
-// copy secrets.h.example to secrets.h and fill in your real credentials.
+// RtcClock::syncFromNtp() uses these to correct the RTC's drift. Both it and
+// WeatherService assume the caller (epaper_dashboard.ino) already brought
+// WiFi up via connectWiFi() -- they no longer manage their own WiFi
+// connect/disconnect cycle, so one wake only pays for one radio session
+// covering NTP + location + weather instead of three. WIFI_SSID/
+// WIFI_PASSWORD come from secrets.h (gitignored, not committed) -- copy
+// secrets.h.example to secrets.h and fill in your real credentials.
 #include "secrets.h"
 constexpr const char *NTP_SERVER_1 = "pool.ntp.org";
 constexpr const char *NTP_SERVER_2 = "time.nist.gov";
 constexpr uint32_t NTP_SYNC_TIMEOUT_MS = 15UL * 1000UL; // give up and keep ticking on RTC alone
-constexpr uint32_t NTP_RESYNC_INTERVAL_MS = 6UL * 60UL * 60UL * 1000UL; // periodic drift correction
+constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 15UL * 1000UL; // per-wake WiFi connect attempt before giving up
 
 // ---- weather (live, via Open-Meteo -- free, no API key required) ----
 // Coordinates for Kottayam town, Kerala (nearest place Open-Meteo's geocoder
@@ -34,7 +38,6 @@ constexpr double WEATHER_LONGITUDE = 76.521;
 // reverse geocode fails (e.g. no WiFi at boot) -- normally the panel shows
 // whatever that lookup resolves the coordinates above to.
 constexpr const char *WEATHER_LOCATION_LABEL = "Veloor, Kottayam";
-constexpr uint32_t WEATHER_UPDATE_INTERVAL_MS = 30UL * 60UL * 1000UL; // live conditions don't need to be fresher than this
 constexpr uint32_t WEATHER_FETCH_TIMEOUT_MS = 15UL * 1000UL;
 
 // ---- timing ----
@@ -95,9 +98,6 @@ constexpr int32_t SYS_UPTIME_AREA_H = 65;
 // Dormant Milestone-2 screens (ClockScreen/WeatherScreen/SystemScreen/
 // ScreenManager) are left on disk untouched but unused for now -- this is a
 // focused pass to get core rendering ghost-free before resuming the dashboard.
-constexpr uint32_t CLOCK_UPDATE_INTERVAL_MS = 60UL * 1000UL; // once a minute, not once a second
-constexpr uint16_t FULL_REFRESH_EVERY_N_UPDATES = 10;         // full flash-clear every 10 clock updates (~10 min)
-
 constexpr int32_t TEST_TITLE_Y = 180;  // "LILYGO T5 ePaper S3"
 constexpr int32_t TEST_TIME_Y = 320;   // "13:42"
 constexpr int32_t TEST_DATE_Y = 400;   // "24 August 2026"
@@ -111,9 +111,35 @@ constexpr int32_t TEST_DYNAMIC_AREA_Y = 230;
 constexpr int32_t TEST_DYNAMIC_AREA_W = 800;
 constexpr int32_t TEST_DYNAMIC_AREA_H = 210;
 
+// ---- deep sleep (power optimization) ----
+// The whole board wakes, renders, then sleeps -- there is no continuously-
+// running loop() anymore. The wake interval is 1 minute so the clock/date
+// (read straight from the RTC, independent of WiFi) stays current; NTP sync
+// and weather fetches are much rarer and gated separately below, NOT tied to
+// this constant -- see NTP_SYNC_EVERY_N_WAKES / WEATHER_REFRESH_EVERY_N_WAKES.
+constexpr uint64_t DEEP_SLEEP_INTERVAL_SEC = 1UL * 60UL; // 1 minute
+constexpr uint64_t DEEP_SLEEP_INTERVAL_US = DEEP_SLEEP_INTERVAL_SEC * 1000000ULL;
+
+// Data-refresh cadences, expressed as "every Nth wake" (wakeCount % N == 0)
+// rather than a wall-clock duration. This is accurate without separately
+// tracking last-synced timestamps: deep-sleep timer wakeups are driven by
+// the RTC's own hardware timer and don't meaningfully drift at this
+// timescale, so a wake count is a reliable proxy for elapsed time.
+// wakeCount == 0 (first-ever boot) satisfies every modulo check below
+// automatically (0 % N == 0), so first boot always does everything with no
+// special-casing needed.
+constexpr uint32_t NTP_SYNC_EVERY_N_WAKES = 360;       // 6 hours at the 1-minute wake interval above
+constexpr uint32_t WEATHER_REFRESH_EVERY_N_WAKES = 30; // 30 minutes at the 1-minute wake interval above
+
+// A full flash-clear (ghost-reset) happens only every Nth render; the rest
+// are cheap partial ticks (just the clock digits). Scaled to preserve the
+// same ~1-hour wall-clock cadence as before (was 12 renders at a 5-minute
+// interval) now that wakes are 5x more frequent -- changing the wake
+// interval without rescaling this would have silently turned ghost-resets
+// into a ~12-minute cadence instead of ~hourly.
+constexpr uint16_t FULL_REFRESH_EVERY_N_WAKES = 60;
+
 // ---- Milestone 4: TRMNL-style split-panel dashboard (2 panels side by side) ----
-// CLOCK_UPDATE_INTERVAL_MS / FULL_REFRESH_EVERY_N_UPDATES above are reused
-// here too -- same timing policy, now driving two panels instead of one screen.
 constexpr int32_t OUTER_MARGIN = 20;
 constexpr int32_t PANEL_GAP = 20;    // horizontal gap between the two panels
 constexpr int32_t PANEL_Y = 20;

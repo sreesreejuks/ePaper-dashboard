@@ -30,27 +30,12 @@ const char *conditionForCode(int code) {
     return "Unknown";
 }
 
-bool connectWiFi() {
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-    uint32_t start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < WEATHER_FETCH_TIMEOUT_MS) {
-        delay(250);
-    }
-    return WiFi.status() == WL_CONNECTED;
-}
-
-void disconnectWiFi() {
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
-}
 } // namespace
 
 bool WeatherService::fetch(WeatherData &out) {
     bool ok = false;
-    if (!connectWiFi()) {
-        Serial.println("[Weather] WiFi connect failed/timed out.");
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("[Weather] WiFi not connected -- skipping fetch.");
     } else {
         char url[256];
         snprintf(url, sizeof(url),
@@ -111,14 +96,13 @@ bool WeatherService::fetch(WeatherData &out) {
         }
     }
 
-    disconnectWiFi();
     return ok;
 }
 
 bool WeatherService::fetchLocationName(WeatherData &out) {
     bool ok = false;
-    if (!connectWiFi()) {
-        Serial.println("[Weather] WiFi connect failed/timed out (location).");
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("[Weather] WiFi not connected -- skipping location fetch.");
     } else {
         char url[192];
         snprintf(url, sizeof(url),
@@ -167,6 +151,5 @@ bool WeatherService::fetchLocationName(WeatherData &out) {
         }
     }
 
-    disconnectWiFi();
     return ok;
 }

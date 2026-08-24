@@ -1,7 +1,7 @@
 #include "rtc_clock.h"
 
 #include "utilities.h" // BOARD_SDA, BOARD_SCL
-#include "../config/config.h" // TIMEZONE_OFFSET_MINUTES, WIFI_SSID, ...
+#include "../config/config.h" // TIMEZONE_OFFSET_MINUTES, NTP_SERVER_1/2, NTP_SYNC_TIMEOUT_MS
 #include <cstdio>
 #include <WiFi.h>
 
@@ -101,34 +101,18 @@ bool RtcClock::begin() {
 }
 
 bool RtcClock::syncFromNtp() {
-    if (!online_) return false;
+    if (!online_ || WiFi.status() != WL_CONNECTED) return false;
 
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    // gmtOffset=0, daylightOffset=0: we want raw UTC out of NTP, since
+    // the RTC chip always stores UTC -- TIMEZONE_OFFSET_MINUTES is
+    // applied separately at display time (see applyOffset() above).
+    configTime(0, 0, NTP_SERVER_1, NTP_SERVER_2);
 
-    uint32_t start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < NTP_SYNC_TIMEOUT_MS) {
-        delay(250);
-    }
+    struct tm timeinfo;
+    if (!getLocalTime(&timeinfo, NTP_SYNC_TIMEOUT_MS)) return false;
 
-    bool synced = false;
-    if (WiFi.status() == WL_CONNECTED) {
-        // gmtOffset=0, daylightOffset=0: we want raw UTC out of NTP, since
-        // the RTC chip always stores UTC -- TIMEZONE_OFFSET_MINUTES is
-        // applied separately at display time (see applyOffset() above).
-        configTime(0, 0, NTP_SERVER_1, NTP_SERVER_2);
-
-        struct tm timeinfo;
-        uint32_t remaining = NTP_SYNC_TIMEOUT_MS - (millis() - start);
-        if (getLocalTime(&timeinfo, remaining)) {
-            rtc_.setDateTime(RTC_DateTime(timeinfo));
-            synced = true;
-        }
-    }
-
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
-    return synced;
+    rtc_.setDateTime(RTC_DateTime(timeinfo));
+    return true;
 }
 
 // NOTE: deliberately NOT using SensorPCF8563::strftime()/formatDateTime().

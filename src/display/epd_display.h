@@ -13,7 +13,8 @@ public:
     // Returns false if the allocation failed.
     bool begin();
     void powerOn();
-    void powerOff();
+    void powerOff();    // epd_poweroff() -- leaves the status LED and POWER_EN on
+    void powerOffAll(); // epd_poweroff_all() -- also cuts POWER_EN and the LED; use before deep sleep
     void fullClear(); // epd_clear() -- aggressive flash-clear, resets ghosting
 
     // ---- Full-frame drawing ----
