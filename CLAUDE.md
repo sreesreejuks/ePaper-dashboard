@@ -15,7 +15,7 @@ see "Refresh model" below. This is deliberate for battery life: the e-paper pane
 image with zero power draw while the ESP32-S3 is in deep sleep, so there's no benefit to keeping
 the CPU awake between updates.
 
-Entry point: [epaper_dashboard.ino](epaper_dashboard.ino).
+Entry point: [ePaper-dashboard.ino](ePaper-dashboard.ino).
 
 ## Build / compile / upload
 
@@ -94,7 +94,7 @@ timer and don't meaningfully drift at this timescale, so wake count is an accura
 elapsed time without needing to track timestamps separately.
 
 Only `RTC_DATA_ATTR` globals (`savedWeather`, `locationResolved`, `wakeCount` in
-`epaper_dashboard.ino`) survive a wake, since deep sleep wipes ordinary RAM; everything else,
+`ePaper-dashboard.ino`) survive a wake, since deep sleep wipes ordinary RAM; everything else,
 including the `EpdDisplay`/`RtcClock`/`WeatherService`/`Panel` objects, is freshly constructed
 every wake. `wakeCount` also drives the full-vs-partial render policy: `DashboardLayout::tick()`
 (cheap partial redraw, just the clock digits) every wake, except every

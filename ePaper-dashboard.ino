@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <Wire.h>
 #include <esp_sleep.h>
+#include <esp_system.h> // esp_reset_reason()
 
 #include "src/config/config.h"
 #include "src/display/epd_display.h"
@@ -62,7 +64,21 @@ void disconnectWiFi() {
 }
 
 void goToSleep() {
+    Serial.printf("Entering deep sleep for %llu seconds...\n", (unsigned long long)DEEP_SLEEP_INTERVAL_SEC);
+    Serial.println("Next wake: timer");
     Serial.flush();
+
+    // Release the I2C bus the RTC was read over during render, and cleanly
+    // tear down the USB CDC connection -- matching the official LilyGo-EPD47
+    // examples (sleep.ino, demo.ino, touch.ino), which always call Wire.end()
+    // and Serial.end() right before esp_deep_sleep_start(). We were only
+    // flushing Serial before, not ending it -- flush() just waits for the
+    // TX buffer to drain, it doesn't release the USB CDC connection, so
+    // COM5 was being left in a half-torn-down state instead of a clean
+    // disconnect when deep sleep cut power out from under it.
+    Wire.end();
+    Serial.end();
+
     esp_sleep_enable_timer_wakeup(DEEP_SLEEP_INTERVAL_US);
     esp_deep_sleep_start(); // never returns -- execution resumes at setup() on the next wake
 }
@@ -72,6 +88,20 @@ void goToSleep() {
 void setup() {
     Serial.begin(115200);
     delay(200);
+
+    // This board has no BOOT/IO0 button, so there's no way to force the ROM
+    // download mode by hand -- and the normal ~1-2s wake is too short to
+    // reliably catch with Arduino IDE's upload. Instead: a manual RESET/EN
+    // press (as opposed to the deep-sleep timer waking us up) means someone
+    // deliberately wants to reflash, so hold here with USB CDC alive for a
+    // comfortable window instead of racing back to sleep. A normal
+    // deep-sleep timer wake skips this entirely -- zero extra power cost in
+    // regular operation.
+    if (esp_reset_reason() != ESP_RST_DEEPSLEEP) {
+        Serial.printf("Manual reset detected -- staying awake %lu ms for reflashing.\n",
+                      (unsigned long)DEV_MODE_WINDOW_MS);
+        delay(DEV_MODE_WINDOW_MS);
+    }
 
     // Carry the last known-good weather forward from before this wake, so
     // that a wake which doesn't fetch (or whose fetch fails) still has
@@ -155,6 +185,13 @@ void setup() {
     // LED, not just the panel, since we're about to sit in deep sleep for
     // DEEP_SLEEP_INTERVAL_SEC rather than looping straight back around.
     display.powerOffAll();
+
+    if (DEV_MODE_STAY_AWAKE) {
+        Serial.println("DEV_MODE_STAY_AWAKE is on -- deep sleep skipped, staying awake for uploads.");
+        while (true) {
+            delay(1000);
+        }
+    }
 
     goToSleep();
 }

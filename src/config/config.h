@@ -1,5 +1,16 @@
 #pragma once
 
+// ==========================================================================
+// DEVELOPMENT TOGGLE -- change this, not the constants further down, when
+// you just want to reflash easily. true = board stays awake permanently
+// after each render (normal always-on USB, upload anytime, no reset-window
+// timing needed). false = normal deep-sleep battery operation. Always flip
+// this back to false and re-upload once (easy while it's still awake from
+// the previous flash) before leaving the board deployed on battery --
+// staying awake between renders defeats the whole point of deep sleep.
+constexpr bool DEV_MODE_STAY_AWAKE = false;
+// ==========================================================================
+
 // Pin/board definitions (BOARD_SDA, BOARD_SCL, EPD_WIDTH, EPD_HEIGHT, etc.)
 // come from the LilyGo-EPD47 library's own utilities.h / epd_driver.h --
 // never redefine hardware pins here, only app-level layout/timing constants.
@@ -16,7 +27,7 @@ constexpr int TIMEZONE_OFFSET_MINUTES = 330; // UTC+5:30
 
 // ---- WiFi / NTP ----
 // RtcClock::syncFromNtp() uses these to correct the RTC's drift. Both it and
-// WeatherService assume the caller (epaper_dashboard.ino) already brought
+// WeatherService assume the caller (ePaper-dashboard.ino) already brought
 // WiFi up via connectWiFi() -- they no longer manage their own WiFi
 // connect/disconnect cycle, so one wake only pays for one radio session
 // covering NTP + location + weather instead of three. WIFI_SSID/
@@ -138,6 +149,13 @@ constexpr uint32_t WEATHER_REFRESH_EVERY_N_WAKES = 30; // 30 minutes at the 1-mi
 // interval without rescaling this would have silently turned ghost-resets
 // into a ~12-minute cadence instead of ~hourly.
 constexpr uint16_t FULL_REFRESH_EVERY_N_WAKES = 60;
+
+// This board has no BOOT/IO0 button, so a manual RESET press is the only
+// way to signal "I want to reflash" -- see the esp_reset_reason() check in
+// ePaper-dashboard.ino's setup(). Only reached on a manual reset, never on
+// a normal deep-sleep timer wake, so it doesn't cost anything in normal
+// battery operation.
+constexpr uint32_t DEV_MODE_WINDOW_MS = 15UL * 1000UL; // stay awake this long after a manual reset
 
 // ---- Milestone 4: TRMNL-style split-panel dashboard (2 panels side by side) ----
 constexpr int32_t OUTER_MARGIN = 20;

@@ -4,7 +4,7 @@
 
 // Fetches live conditions from Open-Meteo (api.open-meteo.com) -- free, no
 // API key required. Assumes the caller has already brought WiFi up (e.g.
-// via connectWiFi() in epaper_dashboard.ino) and leaves it connected
+// via connectWiFi() in ePaper-dashboard.ino) and leaves it connected
 // afterward -- this class does not manage the WiFi connection itself, so a
 // single WiFi session can cover NTP sync, location lookup, and both fetch()
 // calls in one wake instead of paying for a separate connect each time.

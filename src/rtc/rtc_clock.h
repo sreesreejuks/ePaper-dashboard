@@ -13,7 +13,7 @@ public:
     // Fetches UTC via NTP and writes it to the RTC chip -- correcting
     // whatever drift has built up since the last sync. Blocks for up to
     // NTP_SYNC_TIMEOUT_MS. Assumes the caller has already brought WiFi up
-    // (e.g. via connectWiFi() in epaper_dashboard.ino) and leaves it
+    // (e.g. via connectWiFi() in ePaper-dashboard.ino) and leaves it
     // connected afterward -- this method does not manage the WiFi
     // connection itself, so one wake can share a single WiFi session across
     // NTP sync, location lookup, and weather fetch instead of paying for
